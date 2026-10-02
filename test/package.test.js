@@ -16,7 +16,7 @@ test('client artifact registers a lazy DSH factory and reuses host React without
     let registration;
     const calls = [];
     vm.runInNewContext(code, { window: { __ModuleLoader__: { load(value) { registration = value; } } } });
-    assert.equal(registration?.id, '@local/dsh-retry-settings');
+    assert.equal(registration?.id, '@lolkda/dsh-retry');
     assert.deepEqual(calls, []);
     const plugin = registration.factory(name => {
       assert.equal(name, 'react');

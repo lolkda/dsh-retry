@@ -16,7 +16,7 @@ Confirmed actual user state: cpa retryPolicy is normal/maxRetries=20/backoff500.
 
 ## Architecture and lifecycle
 
-Package remains @local/dsh-retry-settings, ESM, compatible DSH0.2.0-rc.2; next package version0.2.0.
+Package remains @lolkda/dsh-retry, ESM, compatible DSH0.2.0-rc.2; next package version0.2.0.
 Plugin Config owns ONE desired `policy` (native raw RetryPolicy shape), exposed as a volatile setting in namespace `dsh-retry-settings`. Native provider `retryPolicy` values become derived application state, not separate user settings in our UI.
 - Missing global Config.policy means inactive/unconfigured: no provider writes at mount. The UI can show native default draft but must say not configured.
 - Lead will set initial global policy to the user's existing20 AFTER installation through the guarded global tool. No guessed initialization from one arbitrary provider.

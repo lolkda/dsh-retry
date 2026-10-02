@@ -12,13 +12,13 @@ User chose to restart DSH manually, then return for final acceptance. Do NOT res
 
 ## Installation truth
 
-- The rebuilt package was overlayed onto the installed package on 2026-10-03 (`/app/.dsh/profiles/web/node_modules/@local/dsh-retry-settings/`). HMR picked up the client half: bundle rev moved `d0c807fbd7f4` → `530ded847676` → `879af3f33e3c` after moving the sync summary above the provider-override list, verified by authenticated index read. The **client half is live after a browser reload**.
+- The rebuilt package was overlayed onto the installed package on 2026-10-03 (`/app/.dsh/profiles/web/node_modules/@lolkda/dsh-retry/`). HMR picked up the client half: bundle rev moved `d0c807fbd7f4` → `530ded847676` → `879af3f33e3c` after moving the sync summary above the provider-override list, verified by authenticated index read. The **client half is live after a browser reload**.
 - The **host half** (Config `providers` field, override-aware synchronizer, `retry_policy` provider argument) is written to disk but the running DSH process still has the old host module loaded. **A DSH restart is required for per-provider override saves and the provider-aware tool to work.**
 - Pre-overlay installed bundle backup: `/app/project/dsh-retry/local-dsh-retry-settings-0.2.0-installed-client.js.pre-restyle`; tarball lineage: `local-dsh-retry-settings-0.2.0.pre-restyle.tgz` (original vendor UI) and `local-dsh-retry-settings-0.2.0.global-only.tgz` (first DSH-style global-only UI), and `local-dsh-retry-settings-0.2.0.provider-overrides-v1.tgz` (before the sync-summary relocation).
 - The project tarball was repacked after the restyle; the pre-restyle tarball is preserved at `/app/project/dsh-retry/local-dsh-retry-settings-0.2.0.pre-restyle.tgz`.
 
 
-Package `@local/dsh-retry-settings@0.2.0` installed using:
+Package `@lolkda/dsh-retry@0.2.0` installed using:
 `/app/project/dsh-retry/local-dsh-retry-settings-0.2.0.tgz`
 
 Last plugin_manager install result: `stage: enable`, `enabled: true`, `changed: true`, **`application: restart-required`**.
