@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      oidc:
+        description: 'Use OIDC provenance (requires npm trusted publisher already configured)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,7 +47,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -60,5 +65,12 @@ jobs:
       - name: Build client bundle
         run: npm run build
 
-      - name: Publish
+      - name: Publish with npm token (first-time setup)
+        if: github.event_name == 'workflow_dispatch' && !inputs.oidc
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish with OIDC provenance
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.oidc)
         run: npm publish --access public --provenance
