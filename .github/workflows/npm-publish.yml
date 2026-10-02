@@ -32,8 +32,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Install DSH test runtime
+        run: npm install --no-save --package-lock=false --legacy-peer-deps @deepseek-ai/dsh@0.2.0-rc.2
+
       - name: Run tests
         run: npm test
+        env:
+          DSH_TEST_RUNTIME_ANCHOR: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh/package.json
 
       - name: Build client bundle
         run: npm run build

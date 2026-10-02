@@ -4,7 +4,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const require = createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json');
+const require = createRequire(process.env.DSH_TEST_RUNTIME_ANCHOR ?? '/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json');
 const primitivesDir = dirname(require.resolve('@deepseek-ai/dsh-client-ui-primitives/package.json'));
 
 /** The one transform applied to every vendored file: namespace class selectors. */
