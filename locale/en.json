@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Request retries",
+    "description": "Configure one global retry policy and backoff for every configurable model provider in Settings, in a DSH-styled form."
+  }
+}

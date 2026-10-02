@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-retry-settings
+      name: '@local/dsh-retry-settings'

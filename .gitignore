@@ -1,0 +1,6 @@
+node_modules/
+artifacts/
+*.tgz
+
+# local restyle backups
+*.pre-restyle
