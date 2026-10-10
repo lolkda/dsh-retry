@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const builder = await import('../scripts/build.mjs');
+
+test('published manifest removes the DSH version gate and agrees with the lockfile', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  for (const value of [manifest, lock.packages['']]) {
+    assert.equal(value.peerDependencies?.['@deepseek-ai/dsh'], undefined);
+    assert.equal(value.peerDependenciesMeta?.['@deepseek-ai/dsh'], undefined);
+    assert.equal(value.dependencies?.['@deepseek-ai/dsh'], undefined);
+    assert.equal(value.name, '@lolkda/dsh-retry');
+    assert.equal(value.version, manifest.version);
+  }
+  assert.equal(lock.version, manifest.version);
+});
 
 test('client artifact registers a lazy DSH factory and reuses host React without activating early', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-retry-build-'));

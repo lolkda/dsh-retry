@@ -1,6 +1,6 @@
 {
   "name": "@lolkda/dsh-retry",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DSH plugin for global-default and per-provider retry-policy overrides.",
   "type": "module",
   "icon": "./icon.svg",
@@ -27,15 +27,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build.mjs",
-    "check": "node --check index.js && node --check client.js"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/dsh": "0.2.0-rc.2"
-  },
-  "peerDependenciesMeta": {
-    "@deepseek-ai/dsh": {
-      "optional": true
-    }
+    "check": "node --check index.js && node --check client.js",
+    "verify-notes": "node scripts/verify-notes.mjs"
   },
   "dsh": {
     "bundle": {

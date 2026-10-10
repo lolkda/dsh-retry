@@ -31,7 +31,9 @@
 
 ## 开发与安装
 
-兼容 DSH `0.2.0-rc.2`；使用匹配的 Schemastery Config 库，Client 复用宿主 React。
+不声明 DSH peer 版本限制，避免宿主升级后仅因版本号被禁止加载。发布测试使用 DSH `0.2.1-alpha.2`；这不代表承诺兼容所有未来版本，升级后仍需运行集成测试。Client 复用宿主 React。
+
+npm 包名为 `@lolkda/dsh-retry`。从旧包 `@local/dsh-retry-settings` 迁移时，通过插件管理器替换 bundle，不要同时启用两个包。行 id 仍为 `dsh-retry-settings`，但带旧包 `name` 的配置覆盖不会匹配新包；请保留原有策略，并在原生设置中重新保存。
 
 ```bash
 npm ci --ignore-scripts --legacy-peer-deps

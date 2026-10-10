@@ -33,7 +33,10 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Install DSH test runtime
-        run: npm install --no-save --package-lock=false --legacy-peer-deps @deepseek-ai/dsh@0.2.0-rc.2
+        run: npm install --no-save --package-lock=false --legacy-peer-deps @deepseek-ai/dsh@0.2.1-alpha.2
+
+      - name: Verify decision notes
+        run: npm run verify-notes
 
       - name: Run tests
         run: npm test
