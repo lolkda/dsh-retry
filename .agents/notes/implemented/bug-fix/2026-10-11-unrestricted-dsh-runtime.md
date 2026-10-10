@@ -19,9 +19,13 @@ Publishing uses the existing GitHub workflow. The old local-named bundle and the
 - Updating the exact peer to 0.2.1-alpha.2 retains an explicit compatibility boundary. It is rejected because the user explicitly requests removal of version restrictions, not another exact pin that breaks on the next upgrade.
 - An exact-version exemption restores this one installation without publishing a new package. It is rejected because it does not fix the npm package, is profile-specific, and is not the requested distribution change.
 
+## Release CI runtime isolation
+
+The first GitHub run exposes test-environment assumptions hidden by the running installation: --legacy-peer-deps omits DSH's required service peers, one Host test ignores DSH_TEST_RUNTIME_ANCHOR, and the profile fixture assumes dependencies are nested under the CLI package. CI installs a complete DSH runtime (with peer installation enabled) and its directly inspected UI primitives in a separate prefix. Every runtime test uses the shared anchor; the fixture resolves the actual @deepseek-ai scope from a package rather than constructing a nested node_modules path. This preserves all acceptance tests instead of skipping failures or adding DSH to the plugin's production dependencies.
+
 ## Verification
 
-Against the installed DSH 0.2.1-alpha.2, npm test passes all 202 tests, including actual Loader activation, settings and tool integration, and native retry execution. The added manifest test rejects a reintroduced DSH peer gate and checks lockfile identity/version agreement. npm run build, npm run check, npm run verify-notes, npm pack --dry-run and git diff --check pass. The package contains the host modules, compiled client, locales and original SVG icon. Local tests use isolated profiles and synthetic provider failures; they do not issue real model requests.
+Against both the installed DSH 0.2.1-alpha.2 and a clean npm-installed 0.2.1-alpha.2 runtime in an isolated prefix, npm test passes all 202 tests, including actual Loader activation, settings and tool integration, and native retry execution. The added manifest test rejects a reintroduced DSH peer gate and checks lockfile identity/version agreement. npm run build, npm run check, npm run verify-notes, npm pack --dry-run and git diff --check pass. The package contains the host modules, compiled client, locales and original SVG icon. Local tests use isolated profiles and synthetic provider failures; they do not issue real model requests.
 
 ## Consequences
 

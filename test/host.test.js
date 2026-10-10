@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { loadDshModule } from './fixtures/dsh-runtime.js';
 
 import { apply as applyHost, Config, inject, name } from '../src/host.js';
 import { GLOBAL_SETTINGS_NS } from '../src/policy.js';
@@ -9,8 +9,7 @@ import { GLOBAL_SETTINGS_NS } from '../src/policy.js';
  * The installed Harness owns the tool-definition subset this plugin must satisfy.
  * Resolving it here keeps the check honest without hardcoding it in production code.
  */
-const runtimeRequire = createRequire('/usr/local/lib/node_modules/@deepseek-ai/dsh/package.json');
-const { assertSupportedJsonSchema, assertObjectJsonSchema } = runtimeRequire('@deepseek-ai/dsh-tools');
+const { assertSupportedJsonSchema, assertObjectJsonSchema } = await loadDshModule('@deepseek-ai/dsh-tools');
 
 const DEFAULT_CODES = ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'];
 const DESIRED = { mode: 'normal', maxRetries: 20, retryableCodes: DEFAULT_CODES, backoff: { initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 } };
