@@ -2,6 +2,10 @@
   "name": "@lolkda/dsh-retry",
   "version": "0.2.2",
   "description": "DSH plugin for global-default and per-provider retry-policy overrides.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lolkda/dsh-retry.git"
+  },
   "type": "module",
   "icon": "./icon.svg",
   "exports": {
