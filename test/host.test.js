@@ -9,7 +9,7 @@ import { GLOBAL_SETTINGS_NS } from '../src/policy.js';
  * The installed Harness owns the tool-definition subset this plugin must satisfy.
  * Resolving it here keeps the check honest without hardcoding it in production code.
  */
-const { assertSupportedJsonSchema, assertObjectJsonSchema } = await loadDshModule('@deepseek-ai/dsh-tools');
+const { assertSupportedJsonSchema, assertObjectJsonSchema, validateJsonSchemaValue } = await loadDshModule('@deepseek-ai/dsh-tools');
 
 const DEFAULT_CODES = ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'];
 const DESIRED = { mode: 'normal', maxRetries: 20, retryableCodes: DEFAULT_CODES, backoff: { initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 } };
@@ -312,6 +312,29 @@ test('list reports the global policy, its revision, and the provider sync summar
   assert.equal(result.total, 3);
   assert.equal(result.synced, 3);
   assert.deepEqual(result.pending, []);
+});
+
+test('list output satisfies the declared tool schema when every provider is synced', async () => {
+  const store = createStore({ globalPolicy: DESIRED, globalRevision: 6 });
+  const harness = createContext(store);
+  applyHost(harness.ctx, { policy: store.policyHandle });
+  await flush();
+  const tool = toolOf(harness);
+  const result = await call(harness, { action: 'list' });
+  assert.equal(result.synced, 3, 'this regression only fires while every provider is in sync');
+  // The Harness rejects a result that violates the tool's own declared output
+  // schema, so an unrepresentable field is a failed call, not a cosmetic detail.
+  assert.deepEqual(validateJsonSchemaValue(tool.output.schema, structuredClone(result), 'value'), []);
+});
+
+test('set output satisfies the declared tool schema too', async () => {
+  const store = createStore({ globalRevision: 3 });
+  const harness = createContext(store);
+  applyHost(harness.ctx, { policy: store.policyHandle });
+  const tool = toolOf(harness);
+  const result = await call(harness, { action: 'set', expectedRevision: 3, policy: DESIRED });
+  assert.equal(result.synced, 3);
+  assert.deepEqual(validateJsonSchemaValue(tool.output.schema, structuredClone(result), 'value'), []);
 });
 
 test('list reports an unconfigured policy without claiming providers are in sync', async () => {

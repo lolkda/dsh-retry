@@ -82,8 +82,8 @@ const POLICY_SCHEMA = {
       type: 'object',
       additionalProperties: false,
       properties: {
-        initialDelayMs: { type: 'number', description: 'Delay before the first retry, in milliseconds.' },
-        maxDelayMs: { type: 'number', description: 'Upper bound on the exponential backoff, in milliseconds.' },
+        initialDelayMs: { type: 'number', description: 'Delay before the first retry, in milliseconds. Set equal to maxDelayMs with jitterRatio 0 for one constant retry interval.' },
+        maxDelayMs: { type: 'number', description: 'Upper bound on the exponential backoff, in milliseconds. Equal to initialDelayMs with jitterRatio 0 means every retry waits the same time.' },
         jitterRatio: { type: 'number', description: 'Symmetric jitter as a fraction of the delay, from 0 to 1.' },
       },
     },
@@ -342,13 +342,17 @@ function readState(described, rows) {
   const providers = (Array.isArray(rows) ? rows : []).map((row) => {
     const desired = effectivePolicyFor(effective, overrides, row.provider);
     const one = summarizeProviderSync(desired, [row]);
+    const reason = one.pending[0]?.reason;
     return {
       provider: row.provider,
       displayName: row.displayName,
       override: hasProviderOverride(overrides, row.provider),
       editable: row.editable === true,
       synced: one.synced === 1,
-      reason: one.pending[0]?.reason ?? null,
+      // The declared output schema types `reason` as a plain string, and the
+      // Harness rejects a violating result, so a synced row omits the key
+      // instead of emitting null. The renderer already tolerates its absence.
+      ...reason === undefined ? {} : { reason },
       policy: normalizePolicy(desired),
     };
   });
