@@ -16,6 +16,15 @@ export const GLOBAL_POLICY_PATH = ['policy'];
 /** Field names a validation failure can be attributed to, for inline display. */
 const VALIDATED_FIELDS = ['maxRetries', 'initialDelayMs', 'maxDelayMs', 'jitterPercent', 'retryableCodes'];
 
+/** Draft value of `backoffMode` for a fixed retry interval. */
+export const CONSTANT_BACKOFF = 'constant';
+
+/** Draft value of `backoffMode` for exponential backoff. */
+export const EXPONENTIAL_BACKOFF = 'exponential';
+
+/** Retries a preview lists before the cap makes the rest identical. */
+const PREVIEW_LIMIT = 6;
+
 /**
  * Build the native path op that writes the global policy.
  * @param policy - the next policy; normalized through the shared module.
@@ -59,17 +68,26 @@ export function providerResetOperation(provider) {
 
 /**
  * Project a native policy into the editable draft a form holds.
+ *
+ * The native policy carries only three backoff numbers, so the draft also
+ * carries the shape those numbers describe: equal delays with zero jitter is a
+ * fixed interval, anything else is exponential backoff. This is derived on
+ * every read and never stored, so no configuration field is added.
+ *
  * @param policy - native raw policy, or `undefined` for the native defaults.
- * @returns the draft: mode, retries, milliseconds, jitter as a percentage, codes.
+ * @returns the draft: mode, backoff shape, retries, milliseconds, jitter as a percentage, codes.
  */
 export function draftFromPolicy(policy) {
   const resolved = normalizePolicy(policy);
+  const backoff = resolved.backoff;
+  const constant = backoff.initialDelayMs === backoff.maxDelayMs && backoff.jitterRatio === 0;
   return {
     mode: resolved.mode,
+    backoffMode: constant ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF,
     maxRetries: resolved.mode === 'always' ? DEFAULT_POLICY.maxRetries : resolved.maxRetries,
-    initialDelayMs: resolved.backoff.initialDelayMs,
-    maxDelayMs: resolved.backoff.maxDelayMs,
-    jitterPercent: resolved.backoff.jitterRatio * 100,
+    initialDelayMs: backoff.initialDelayMs,
+    maxDelayMs: backoff.maxDelayMs,
+    jitterPercent: backoff.jitterRatio * 100,
     retryableCodes: [...(resolved.mode === 'always' ? DEFAULT_POLICY.retryableCodes : resolved.retryableCodes)]
   };
 }
@@ -96,16 +114,22 @@ function requireNumber(value, label) {
  * A blank number stays an error here: passing it through would let the shared
  * layer fall back to a native default and save a value the user never entered.
  *
+ * A fixed interval is projected onto the native three fields as
+ * `initialDelayMs = maxDelayMs = interval` with `jitterRatio` 0, which the retry
+ * executor resolves to the same delay on every attempt.
+ *
  * @param draft - draft produced by {@link draftFromPolicy} and edited by the form.
  * @returns a native raw policy; `always` carries only mode and backoff.
  * @throws {Error} when a numeric field is blank or not a finite number.
  */
 export function policyFromDraft(draft) {
-  const backoff = {
-    initialDelayMs: requireNumber(draft.initialDelayMs, 'policy.backoff.initialDelayMs'),
-    maxDelayMs: requireNumber(draft.maxDelayMs, 'policy.backoff.maxDelayMs'),
-    jitterRatio: requireNumber(draft.jitterPercent, 'policy.backoff.jitterPercent') / 100
-  };
+  const backoff = draft.backoffMode === CONSTANT_BACKOFF
+    ? constantBackoff(requireNumber(draft.initialDelayMs, 'policy.backoff.initialDelayMs'))
+    : {
+        initialDelayMs: requireNumber(draft.initialDelayMs, 'policy.backoff.initialDelayMs'),
+        maxDelayMs: requireNumber(draft.maxDelayMs, 'policy.backoff.maxDelayMs'),
+        jitterRatio: requireNumber(draft.jitterPercent, 'policy.backoff.jitterPercent') / 100
+      };
   if (draft.mode === 'always') return { mode: 'always', backoff };
   return {
     mode: 'normal',
@@ -113,6 +137,60 @@ export function policyFromDraft(draft) {
     retryableCodes: [...draft.retryableCodes],
     backoff
   };
+}
+
+/** The native backoff that keeps every retry waiting exactly `intervalMs`. */
+function constantBackoff(intervalMs) {
+  return { initialDelayMs: intervalMs, maxDelayMs: intervalMs, jitterRatio: 0 };
+}
+
+/**
+ * Describe the waits a draft actually produces, without the random jitter.
+ *
+ * The published delay is the exponential series clipped at the max delay, so a
+ * late retry shows the cap rather than the initial delay. Making that visible is
+ * the point of this projection: it lets a form explain which retry the number a
+ * user sees belongs to.
+ *
+ * @param draft - current draft, possibly invalid or `null`.
+ * @param options - `limit` bounds how many retries are listed.
+ * @returns `null` when nothing can be previewed, otherwise a fixed-interval or exponential summary.
+ */
+export function backoffPreview(draft, { limit = PREVIEW_LIMIT } = {}) {
+  if (draft === null || draft === undefined) return null;
+  const retries = previewRetries(draft, limit);
+  const intervalMs = Number(draft.initialDelayMs);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return null;
+  if (draft.backoffMode === CONSTANT_BACKOFF) return { kind: CONSTANT_BACKOFF, intervalMs, count: retries };
+  const maxDelayMs = Number(draft.maxDelayMs);
+  if (!Number.isFinite(maxDelayMs) || maxDelayMs <= 0) return null;
+  const jitterPercent = Number(draft.jitterPercent);
+  const steps = [];
+  let capRetry = null;
+  for (let retry = 1; retry <= retries; retry += 1) {
+    const delayMs = Math.min(intervalMs * 2 ** (retry - 1), maxDelayMs);
+    steps.push({ retry, delayMs });
+    if (capRetry === null && delayMs >= maxDelayMs) capRetry = retry;
+  }
+  return {
+    kind: EXPONENTIAL_BACKOFF,
+    steps,
+    capRetry,
+    capMs: maxDelayMs,
+    jitterPercent: Number.isFinite(jitterPercent) && jitterPercent > 0 ? jitterPercent : 0
+  };
+}
+
+/**
+ * How many retries the preview lists: always mode keeps retrying, a bounded
+ * policy stops at its own count.
+ */
+function previewRetries(draft, limit) {
+  const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : PREVIEW_LIMIT;
+  if (draft.mode === 'always') return bound;
+  const maxRetries = Number(draft.maxRetries);
+  if (!Number.isFinite(maxRetries) || maxRetries < 0) return bound;
+  return Math.min(bound, Math.floor(maxRetries));
 }
 
 /**

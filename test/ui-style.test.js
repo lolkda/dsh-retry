@@ -9,6 +9,7 @@ test('redesigned stylesheet stays on public DSH tokens and stable classes', () =
   assert.match(uiCss, /--dsw-alias-button-primary-fill/);
   assert.match(uiCss, /\.drs-panel/);
   assert.match(uiCss, /\.drs-segmented/);
+  assert.match(uiCss, /\.drs-preview/);
   assert.match(uiCss, /\.drs-chip/);
   assert.match(uiCss, /\.drs-stateDot/);
 });

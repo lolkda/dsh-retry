@@ -12,14 +12,21 @@
 
 import React from 'react';
 
+import { CONSTANT_BACKOFF, EXPONENTIAL_BACKOFF, backoffPreview } from './ui-draft.js';
+
 const h = React.createElement;
 
-/** Numeric draft fields, in display order, with hint and unit label keys. */
+/** Numeric draft fields, in display order, with label, hint and unit keys. */
 const NUMERIC_FIELDS = [
-  ['maxRetries', 'maxRetriesHint', 'unitRetries'],
-  ['initialDelayMs', null, 'unitMilliseconds'],
-  ['maxDelayMs', null, 'unitMilliseconds'],
-  ['jitterPercent', null, 'unitPercent']
+  ['maxRetries', 'maxRetries', 'maxRetriesHint', 'unitRetries'],
+  ['initialDelayMs', 'initialDelayMs', null, 'unitMilliseconds'],
+  ['maxDelayMs', 'maxDelayMs', null, 'unitMilliseconds'],
+  ['jitterPercent', 'jitterPercent', null, 'unitPercent']
+];
+
+/** The single field a fixed-interval backoff edits. */
+const CONSTANT_FIELDS = [
+  ['initialDelayMs', 'constantIntervalMs', null, 'unitMilliseconds']
 ];
 
 const MODES = [
@@ -27,9 +34,39 @@ const MODES = [
   ['always', 'modeAlways']
 ];
 
+const BACKOFF_MODES = [
+  [EXPONENTIAL_BACKOFF, 'backoffExponential'],
+  [CONSTANT_BACKOFF, 'backoffConstant']
+];
+
+/** The backoff shape a draft edits; a draft from the native defaults is exponential. */
+function backoffModeOf(draft) {
+  return draft?.backoffMode === CONSTANT_BACKOFF ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF;
+}
+
 /** Blank input stays null so the shared layer rejects it instead of defaulting. */
 function parseNumeric(raw) {
   return raw.trim() === '' ? null : Number(raw);
+}
+
+/**
+ * Render the waits a draft produces, so the delay a retry actually shows is
+ * visible in the form that sets it.
+ * @param draft - current draft, possibly invalid.
+ * @param t - section translator.
+ * @returns the schedule text, or `null` when there is nothing to preview.
+ */
+function backoffPreviewText(draft, t) {
+  const preview = backoffPreview(draft);
+  if (preview === null) return null;
+  if (preview.kind === CONSTANT_BACKOFF) {
+    return preview.count === 0 ? null : t('backoffPreviewConstant', { ms: preview.intervalMs });
+  }
+  if (preview.steps.length === 0) return null;
+  const parts = [preview.steps.map(step => t('backoffPreviewStep', { ms: step.delayMs })).join(' → ')];
+  if (preview.capRetry !== null) parts.push(t('backoffPreviewCap', { retry: preview.capRetry, ms: preview.capMs }));
+  if (preview.jitterPercent > 0) parts.push(t('backoffPreviewJitter', { percent: preview.jitterPercent }));
+  return parts.join(' · ');
 }
 
 /** Map a controller notice kind onto the design-system tone used by the UI. */
@@ -101,10 +138,10 @@ export function RetrySettingsView({ snapshot, actions, t }) {
   const noticeQuiet = notice?.kind === 'saved' || notice?.kind === 'unconfigured';
   const syncReason = reason => reason === 'the provider policy differs from the global policy' ? t('syncDiffers') : reason;
 
-  const numericField = ({ field, hintKey, unitKey, value, error, locked, onChange, idPrefix }) => h(
+  const numericField = ({ field, labelKey = field, hintKey, unitKey, value, error, locked, onChange, idPrefix }) => h(
     'div',
     { className: 'drs-field', key: field },
-    h('label', { className: 'drs-label', htmlFor: `${idPrefix}-${field}` }, t(field)),
+    h('label', { className: 'drs-label', htmlFor: `${idPrefix}-${field}` }, t(labelKey)),
     h(
       'div',
       { className: 'drs-inputShell', 'data-invalid': error === undefined ? 'false' : 'true' },
@@ -125,29 +162,30 @@ export function RetrySettingsView({ snapshot, actions, t }) {
       : h('p', { className: 'drs-invalid' }, error)
   );
 
-  const segmentControl = ({ draft, locked, onChange }) => {
-    const segmentIndex = Math.max(0, MODES.findIndex(([value]) => value === draft.mode));
+  const segmentControl = ({ group, label, options, value, locked, onSelect }) => {
+    const segmentIndex = Math.max(0, options.findIndex(([option]) => option === value));
     return h(
       'div',
       {
         role: 'tablist',
-        'aria-label': t('mode'),
+        'aria-label': t(label),
         className: 'drs-segmented',
-        style: { '--drs-segment-count': String(MODES.length), '--drs-segment-index': String(segmentIndex) }
+        'data-group': group,
+        style: { '--drs-segment-count': String(options.length), '--drs-segment-index': String(segmentIndex) }
       },
       h('span', { 'aria-hidden': 'true', className: 'drs-segmentedIndicator' }),
-      MODES.map(([value, labelKey]) =>
+      options.map(([option, labelKey]) =>
         h(
           'button',
           {
-            key: value,
+            key: option,
             type: 'button',
             role: 'tab',
             className: 'drs-segment',
-            'aria-selected': draft.mode === value,
-            tabIndex: draft.mode === value ? 0 : -1,
+            'aria-selected': value === option,
+            tabIndex: value === option ? 0 : -1,
             disabled: locked,
-            onClick: () => onChange('mode', value)
+            onClick: () => onSelect(option)
           },
           t(labelKey)
         ))
@@ -230,7 +268,12 @@ export function RetrySettingsView({ snapshot, actions, t }) {
   };
 
   const policyEditor = ({ draft, fieldErrors, locked, onSetField, onToggleCode, onAddCode, onRemoveCode, custom, setCustom, idPrefix }) => {
-    const fields = draft.mode === 'normal' ? NUMERIC_FIELDS : NUMERIC_FIELDS.filter(([field]) => field !== 'maxRetries');
+    const constant = backoffModeOf(draft) === CONSTANT_BACKOFF;
+    const always = draft.mode === 'always';
+    const retryField = always ? [] : NUMERIC_FIELDS.filter(([field]) => field === 'maxRetries');
+    // A fixed interval is one number; exponential backoff edits the series.
+    const fields = [...retryField, ...(constant ? CONSTANT_FIELDS : NUMERIC_FIELDS.filter(([field]) => field !== 'maxRetries'))];
+    const previewText = backoffPreviewText(draft, t);
     return h(
       'div',
       { className: 'drs-panel' },
@@ -242,8 +285,15 @@ export function RetrySettingsView({ snapshot, actions, t }) {
           { className: 'drs-head' },
           h('div', { className: 'drs-labelGroup' }, h('h3', { className: 'drs-panelTitle' }, t('mode')))
         ),
-        segmentControl({ draft, locked, onChange: onSetField }),
-        draft.mode === 'always' ? h('p', { className: 'drs-hint' }, t('alwaysNote')) : null
+        segmentControl({
+          group: 'mode',
+          label: 'mode',
+          options: MODES,
+          value: draft.mode,
+          locked,
+          onSelect: value => onSetField('mode', value)
+        }),
+        always ? h('p', { className: 'drs-hint' }, t('alwaysNote')) : null
       ),
       h(
         'div',
@@ -253,11 +303,20 @@ export function RetrySettingsView({ snapshot, actions, t }) {
           { className: 'drs-head' },
           h('div', { className: 'drs-labelGroup' }, h('h3', { className: 'drs-panelTitle' }, t('parametersTitle')))
         ),
+        segmentControl({
+          group: 'backoff',
+          label: 'backoffMode',
+          options: BACKOFF_MODES,
+          value: constant ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF,
+          locked,
+          onSelect: value => onSetField('backoffMode', value)
+        }),
         h(
           'div',
           { className: 'drs-numberGrid' },
-          fields.map(([field, hintKey, unitKey]) => numericField({
+          fields.map(([field, labelKey, hintKey, unitKey]) => numericField({
             field,
+            labelKey,
             hintKey,
             unitKey,
             value: draft[field],
@@ -267,7 +326,10 @@ export function RetrySettingsView({ snapshot, actions, t }) {
             idPrefix
           }))
         ),
-        h('p', { className: 'drs-hint' }, t('backoffHint'))
+        h('p', { className: 'drs-hint' }, t(constant ? 'constantHint' : 'backoffHint')),
+        previewText === null
+          ? null
+          : h('p', { key: 'preview', className: 'drs-hint drs-preview', 'data-kind': constant ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF }, `${t('backoffPreview')}${previewText}`)
       ),
       draft.mode === 'normal'
         ? h(

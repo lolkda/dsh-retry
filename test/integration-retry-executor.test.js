@@ -32,6 +32,7 @@ import test from 'node:test';
 
 import { loadDshModule } from './fixtures/dsh-runtime.js';
 import { normalizePolicy } from '../src/policy.js';
+import { CONSTANT_BACKOFF, draftFromPolicy, policyFromDraft } from '../src/ui-draft.js';
 
 const { Context } = await loadDshModule('@deepseek-ai/cordis');
 const { agentEvents } = await loadDshModule('@deepseek-ai/dsh-agent');
@@ -241,4 +242,27 @@ test('an always-mode policy retries a permanent failure without an attempt limit
   } finally {
     clearTimeout(timer);
   }
+});
+
+test('a fixed-interval draft makes every scheduled retry wait the same time', async () => {
+  // The projection the form saves is exactly what the executor consumes, so
+  // this drives the real resolver and the real backoff with those numbers.
+  const draft = { ...draftFromPolicy(undefined), backoffMode: CONSTANT_BACKOFF, initialDelayMs: 2, maxRetries: 3 };
+  const policy = resolveRetryPolicy(policyFromDraft(draft), 'integration.constant');
+  assert.equal(policy.initialDelayMs, 2);
+  assert.equal(policy.maxDelayMs, 2);
+  assert.equal(policy.jitterRatio, 0);
+  const { events } = await driveTurn({ policy, maxAttempts: 5 });
+  const scheduled = events.filter((event) => event.type === 'llm/retry').map((event) => event.data.delayMs);
+  assert.deepEqual(scheduled, [2, 2, 2], 'a fixed interval never grows');
+});
+
+test('the same numbers read back as exponential backoff keep growing', async () => {
+  const policy = resolveRetryPolicy(
+    { mode: 'normal', maxRetries: 3, backoff: { initialDelayMs: 2, maxDelayMs: 8, jitterRatio: 0 } },
+    'integration.exponential',
+  );
+  const { events } = await driveTurn({ policy, maxAttempts: 5 });
+  const scheduled = events.filter((event) => event.type === 'llm/retry').map((event) => event.data.delayMs);
+  assert.deepEqual(scheduled, [2, 4, 8], 'the exponential series is what a fixed interval replaces');
 });

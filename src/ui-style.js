@@ -357,6 +357,12 @@ export const uiCss = `
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* The backoff preview is a computed value, not another hint: tabular digits let
+ * the listed waits be scanned and compared at a glance. */
+.drs-preview {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Retryable codes as selectable chips: the checked state uses the same ghost
  * active fill and inset border as the shipped Pill component. */
 .drs-chipList {

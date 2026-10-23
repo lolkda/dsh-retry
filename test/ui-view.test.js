@@ -408,3 +408,55 @@ test('选中供应商后展开覆盖编辑器并显示保存覆盖', async () =>
     await unmount();
   }
 });
+
+test('退避方式分段控件把固定间隔上报为 backoffMode 字段', async () => {
+  const recorder = actions();
+  const { container, unmount } = await render(snapshot(), recorder);
+  try {
+    const groups = [...container.querySelectorAll('[role="tablist"].drs-segmented')];
+    assert.equal(groups.length, 2);
+    assert.equal(groups[1].getAttribute('aria-label'), '退避方式');
+    assert.equal(groups[1].querySelector('[role="tab"][aria-selected="true"]').textContent, '指数退避');
+    await interact(() => button(container, '固定间隔').click());
+    assert.deepEqual(recorder.calls, [['setField', 'backoffMode', 'constant']]);
+  } finally {
+    await unmount();
+  }
+});
+
+test('固定间隔只显示一个间隔输入并给出恒定预览', async () => {
+  const constant = draft({ backoffMode: 'constant', initialDelayMs: 2000, maxDelayMs: 2000, jitterPercent: 0 });
+  const { container, unmount } = await render(snapshot({ draft: constant }));
+  try {
+    assert.equal(byLabel(container, '固定间隔（毫秒）').value, '2000');
+    assert.equal(container.querySelector('#drs-maxDelayMs'), null);
+    assert.equal(container.querySelector('#drs-jitterPercent'), null);
+    assert.match(container.textContent, /每次重试固定等待 2000 ms/);
+  } finally {
+    await unmount();
+  }
+});
+
+test('指数退避预览列出逐次等待与封顶次数', async () => {
+  // A bounded policy lists only the retries it actually performs, so the cap is
+  // reached here because this draft allows more than five retries.
+  const { container, unmount } = await render(snapshot({ draft: draft({ maxRetries: 20 }) }));
+  try {
+    assert.match(container.textContent, /退避预览/);
+    assert.match(container.textContent, /500 ms → 1000 ms → 2000 ms → 4000 ms → 8000 ms → 10000 ms/);
+    assert.match(container.textContent, /第 6 次起封顶 10000 ms/);
+    assert.match(container.textContent, /±10%/);
+  } finally {
+    await unmount();
+  }
+});
+
+test('次数上限低于封顶时预览不虚报未发生的重试', async () => {
+  const { container, unmount } = await render(snapshot({ draft: draft({ maxRetries: 3 }) }));
+  try {
+    assert.match(container.textContent, /500 ms → 1000 ms → 2000 ms/);
+    assert.equal(/封顶/.test(container.textContent), false);
+  } finally {
+    await unmount();
+  }
+});

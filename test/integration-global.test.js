@@ -393,3 +393,61 @@ test('mounting the plugin with no global policy leaves every provider untouched'
     await env.close();
   }
 });
+
+/**
+ * Poll until `predicate` holds, so a test can observe an asynchronous
+ * reconciliation instead of assuming a fixed delay.
+ * @param predicate - synchronous check.
+ * @param options - bounded wait.
+ * @returns true when the predicate held before the deadline.
+ */
+async function until(predicate, { timeoutMs = 3000, stepMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+}
+
+test('a global policy written through the real Settings service reaches every provider', async () => {
+  // The settings page writes through the native Settings service and then calls
+  // no plugin API at all: the Host owns convergence, so a save has to land on the
+  // providers by itself.
+  const env = await createNativeSettingsProfile({
+    layout: 'multi',
+    lowerPolicy: true,
+    global: { id: GLOBAL_NS, modulePath: HOST_MODULE, policy: USER_POLICY },
+    services: (hostCtx) => {
+      hostCtx.provide('tools', { register: () => () => {} });
+      hostCtx.provide('llm', { listConfigurableProviders: async () => directory() });
+      hostCtx.provide('settingsController', {
+        describe: () => ({ writable: true, hasDocument: true, namespaces: hostCtx.get('settings')?.describe({ redactSecrets: true }) ?? [] }),
+        mutate: async (ns, operations, expectedRevision) => hostCtx.get('settings').mutate(ns, operations, expectedRevision),
+      });
+    },
+  });
+  try {
+    assert.ok(
+      await until(() => storedPolicy(env, FIXTURE_NS, FIXTURE_ROUTES[0])?.maxRetries === USER_POLICY.maxRetries),
+      'mount-time reconciliation applies the configured policy',
+    );
+
+    const next = { mode: 'always', backoff: { initialDelayMs: 500, maxDelayMs: 500, jitterRatio: 0 } };
+    const view = env.viewOf(GLOBAL_NS);
+    await env.settings.mutate(GLOBAL_NS, [{ op: 'set', path: ['policy'], value: next }], view.revision);
+
+    assert.ok(
+      await until(() => storedPolicy(env, FIXTURE_NS, FIXTURE_ROUTES[0])?.backoff?.maxDelayMs === next.backoff.maxDelayMs),
+      'the save converges on every provider without the plugin tool being called',
+    );
+    assert.ok(
+      await until(() => storedPolicy(env, FIXTURE_NS_ALT, FIXTURE_ALT_ROUTE)?.backoff?.maxDelayMs === next.backoff.maxDelayMs),
+      'the second namespace converges too',
+    );
+    assert.equal(storedPolicy(env, FIXTURE_NS, FIXTURE_ROUTES[0]).backoff.jitterRatio, 0);
+    assert.equal(storedPolicy(env, FIXTURE_NS, FIXTURE_ROUTES[1]).backoff.maxDelayMs, next.backoff.maxDelayMs, 'every route in the namespace converges');
+  } finally {
+    await env.close();
+  }
+});

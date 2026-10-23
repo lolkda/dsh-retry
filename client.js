@@ -381,6 +381,9 @@ function summarizeProviderSync(policy, rows, overrides) {
 // src/ui-draft.js
 var GLOBAL_POLICY_PATH = ["policy"];
 var VALIDATED_FIELDS = ["maxRetries", "initialDelayMs", "maxDelayMs", "jitterPercent", "retryableCodes"];
+var CONSTANT_BACKOFF = "constant";
+var EXPONENTIAL_BACKOFF = "exponential";
+var PREVIEW_LIMIT = 6;
 function globalSetOperation(policy) {
   return { op: "set", path: [...GLOBAL_POLICY_PATH], value: normalizePolicy(policy) };
 }
@@ -398,12 +401,15 @@ function providerResetOperation(provider) {
 }
 function draftFromPolicy(policy) {
   const resolved = normalizePolicy(policy);
+  const backoff = resolved.backoff;
+  const constant = backoff.initialDelayMs === backoff.maxDelayMs && backoff.jitterRatio === 0;
   return {
     mode: resolved.mode,
+    backoffMode: constant ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF,
     maxRetries: resolved.mode === "always" ? DEFAULT_POLICY.maxRetries : resolved.maxRetries,
-    initialDelayMs: resolved.backoff.initialDelayMs,
-    maxDelayMs: resolved.backoff.maxDelayMs,
-    jitterPercent: resolved.backoff.jitterRatio * 100,
+    initialDelayMs: backoff.initialDelayMs,
+    maxDelayMs: backoff.maxDelayMs,
+    jitterPercent: backoff.jitterRatio * 100,
     retryableCodes: [...resolved.mode === "always" ? DEFAULT_POLICY.retryableCodes : resolved.retryableCodes]
   };
 }
@@ -416,7 +422,7 @@ function requireNumber(value, label) {
   return resolved;
 }
 function policyFromDraft(draft) {
-  const backoff = {
+  const backoff = draft.backoffMode === CONSTANT_BACKOFF ? constantBackoff(requireNumber(draft.initialDelayMs, "policy.backoff.initialDelayMs")) : {
     initialDelayMs: requireNumber(draft.initialDelayMs, "policy.backoff.initialDelayMs"),
     maxDelayMs: requireNumber(draft.maxDelayMs, "policy.backoff.maxDelayMs"),
     jitterRatio: requireNumber(draft.jitterPercent, "policy.backoff.jitterPercent") / 100
@@ -428,6 +434,40 @@ function policyFromDraft(draft) {
     retryableCodes: [...draft.retryableCodes],
     backoff
   };
+}
+function constantBackoff(intervalMs) {
+  return { initialDelayMs: intervalMs, maxDelayMs: intervalMs, jitterRatio: 0 };
+}
+function backoffPreview(draft, { limit = PREVIEW_LIMIT } = {}) {
+  if (draft === null || draft === void 0) return null;
+  const retries = previewRetries(draft, limit);
+  const intervalMs = Number(draft.initialDelayMs);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return null;
+  if (draft.backoffMode === CONSTANT_BACKOFF) return { kind: CONSTANT_BACKOFF, intervalMs, count: retries };
+  const maxDelayMs = Number(draft.maxDelayMs);
+  if (!Number.isFinite(maxDelayMs) || maxDelayMs <= 0) return null;
+  const jitterPercent = Number(draft.jitterPercent);
+  const steps = [];
+  let capRetry = null;
+  for (let retry = 1; retry <= retries; retry += 1) {
+    const delayMs = Math.min(intervalMs * 2 ** (retry - 1), maxDelayMs);
+    steps.push({ retry, delayMs });
+    if (capRetry === null && delayMs >= maxDelayMs) capRetry = retry;
+  }
+  return {
+    kind: EXPONENTIAL_BACKOFF,
+    steps,
+    capRetry,
+    capMs: maxDelayMs,
+    jitterPercent: Number.isFinite(jitterPercent) && jitterPercent > 0 ? jitterPercent : 0
+  };
+}
+function previewRetries(draft, limit) {
+  const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : PREVIEW_LIMIT;
+  if (draft.mode === "always") return bound;
+  const maxRetries = Number(draft.maxRetries);
+  if (!Number.isFinite(maxRetries) || maxRetries < 0) return bound;
+  return Math.min(bound, Math.floor(maxRetries));
 }
 function draftFieldErrors(draft) {
   if (draft === null || draft === void 0) return {};
@@ -896,17 +936,39 @@ function nextCodes(codes, code, checked) {
 var import_react = __toESM(require("react"), 1);
 var h = import_react.default.createElement;
 var NUMERIC_FIELDS = [
-  ["maxRetries", "maxRetriesHint", "unitRetries"],
-  ["initialDelayMs", null, "unitMilliseconds"],
-  ["maxDelayMs", null, "unitMilliseconds"],
-  ["jitterPercent", null, "unitPercent"]
+  ["maxRetries", "maxRetries", "maxRetriesHint", "unitRetries"],
+  ["initialDelayMs", "initialDelayMs", null, "unitMilliseconds"],
+  ["maxDelayMs", "maxDelayMs", null, "unitMilliseconds"],
+  ["jitterPercent", "jitterPercent", null, "unitPercent"]
+];
+var CONSTANT_FIELDS = [
+  ["initialDelayMs", "constantIntervalMs", null, "unitMilliseconds"]
 ];
 var MODES = [
   ["normal", "modeNormal"],
   ["always", "modeAlways"]
 ];
+var BACKOFF_MODES = [
+  [EXPONENTIAL_BACKOFF, "backoffExponential"],
+  [CONSTANT_BACKOFF, "backoffConstant"]
+];
+function backoffModeOf(draft) {
+  return draft?.backoffMode === CONSTANT_BACKOFF ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF;
+}
 function parseNumeric(raw) {
   return raw.trim() === "" ? null : Number(raw);
+}
+function backoffPreviewText(draft, t) {
+  const preview = backoffPreview(draft);
+  if (preview === null) return null;
+  if (preview.kind === CONSTANT_BACKOFF) {
+    return preview.count === 0 ? null : t("backoffPreviewConstant", { ms: preview.intervalMs });
+  }
+  if (preview.steps.length === 0) return null;
+  const parts = [preview.steps.map((step) => t("backoffPreviewStep", { ms: step.delayMs })).join(" \u2192 ")];
+  if (preview.capRetry !== null) parts.push(t("backoffPreviewCap", { retry: preview.capRetry, ms: preview.capMs }));
+  if (preview.jitterPercent > 0) parts.push(t("backoffPreviewJitter", { percent: preview.jitterPercent }));
+  return parts.join(" \xB7 ");
 }
 function noticeTone(kind) {
   switch (kind) {
@@ -966,10 +1028,10 @@ function RetrySettingsView({ snapshot, actions, t }) {
   const noticeText = notice === null || notice === void 0 ? null : notice.message ?? t(notice.kind === "external" ? "externalChanged" : notice.kind);
   const noticeQuiet = notice?.kind === "saved" || notice?.kind === "unconfigured";
   const syncReason = (reason) => reason === "the provider policy differs from the global policy" ? t("syncDiffers") : reason;
-  const numericField = ({ field, hintKey, unitKey, value, error, locked, onChange, idPrefix }) => h(
+  const numericField = ({ field, labelKey = field, hintKey, unitKey, value, error, locked, onChange, idPrefix }) => h(
     "div",
     { className: "drs-field", key: field },
-    h("label", { className: "drs-label", htmlFor: `${idPrefix}-${field}` }, t(field)),
+    h("label", { className: "drs-label", htmlFor: `${idPrefix}-${field}` }, t(labelKey)),
     h(
       "div",
       { className: "drs-inputShell", "data-invalid": error === void 0 ? "false" : "true" },
@@ -987,28 +1049,29 @@ function RetrySettingsView({ snapshot, actions, t }) {
     ),
     error === void 0 ? hintKey === null ? null : h("p", { className: "drs-hint" }, t(hintKey)) : h("p", { className: "drs-invalid" }, error)
   );
-  const segmentControl = ({ draft: draft2, locked, onChange }) => {
-    const segmentIndex = Math.max(0, MODES.findIndex(([value]) => value === draft2.mode));
+  const segmentControl = ({ group, label, options, value, locked, onSelect }) => {
+    const segmentIndex = Math.max(0, options.findIndex(([option]) => option === value));
     return h(
       "div",
       {
         role: "tablist",
-        "aria-label": t("mode"),
+        "aria-label": t(label),
         className: "drs-segmented",
-        style: { "--drs-segment-count": String(MODES.length), "--drs-segment-index": String(segmentIndex) }
+        "data-group": group,
+        style: { "--drs-segment-count": String(options.length), "--drs-segment-index": String(segmentIndex) }
       },
       h("span", { "aria-hidden": "true", className: "drs-segmentedIndicator" }),
-      MODES.map(([value, labelKey]) => h(
+      options.map(([option, labelKey]) => h(
         "button",
         {
-          key: value,
+          key: option,
           type: "button",
           role: "tab",
           className: "drs-segment",
-          "aria-selected": draft2.mode === value,
-          tabIndex: draft2.mode === value ? 0 : -1,
+          "aria-selected": value === option,
+          tabIndex: value === option ? 0 : -1,
           disabled: locked,
-          onClick: () => onChange("mode", value)
+          onClick: () => onSelect(option)
         },
         t(labelKey)
       ))
@@ -1087,7 +1150,11 @@ function RetrySettingsView({ snapshot, actions, t }) {
     ];
   };
   const policyEditor = ({ draft: draft2, fieldErrors: fieldErrors2, locked, onSetField, onToggleCode, onAddCode, onRemoveCode, custom, setCustom, idPrefix }) => {
-    const fields = draft2.mode === "normal" ? NUMERIC_FIELDS : NUMERIC_FIELDS.filter(([field]) => field !== "maxRetries");
+    const constant = backoffModeOf(draft2) === CONSTANT_BACKOFF;
+    const always = draft2.mode === "always";
+    const retryField = always ? [] : NUMERIC_FIELDS.filter(([field]) => field === "maxRetries");
+    const fields = [...retryField, ...constant ? CONSTANT_FIELDS : NUMERIC_FIELDS.filter(([field]) => field !== "maxRetries")];
+    const previewText = backoffPreviewText(draft2, t);
     return h(
       "div",
       { className: "drs-panel" },
@@ -1099,8 +1166,15 @@ function RetrySettingsView({ snapshot, actions, t }) {
           { className: "drs-head" },
           h("div", { className: "drs-labelGroup" }, h("h3", { className: "drs-panelTitle" }, t("mode")))
         ),
-        segmentControl({ draft: draft2, locked, onChange: onSetField }),
-        draft2.mode === "always" ? h("p", { className: "drs-hint" }, t("alwaysNote")) : null
+        segmentControl({
+          group: "mode",
+          label: "mode",
+          options: MODES,
+          value: draft2.mode,
+          locked,
+          onSelect: (value) => onSetField("mode", value)
+        }),
+        always ? h("p", { className: "drs-hint" }, t("alwaysNote")) : null
       ),
       h(
         "div",
@@ -1110,11 +1184,20 @@ function RetrySettingsView({ snapshot, actions, t }) {
           { className: "drs-head" },
           h("div", { className: "drs-labelGroup" }, h("h3", { className: "drs-panelTitle" }, t("parametersTitle")))
         ),
+        segmentControl({
+          group: "backoff",
+          label: "backoffMode",
+          options: BACKOFF_MODES,
+          value: constant ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF,
+          locked,
+          onSelect: (value) => onSetField("backoffMode", value)
+        }),
         h(
           "div",
           { className: "drs-numberGrid" },
-          fields.map(([field, hintKey, unitKey]) => numericField({
+          fields.map(([field, labelKey, hintKey, unitKey]) => numericField({
             field,
+            labelKey,
             hintKey,
             unitKey,
             value: draft2[field],
@@ -1124,7 +1207,8 @@ function RetrySettingsView({ snapshot, actions, t }) {
             idPrefix
           }))
         ),
-        h("p", { className: "drs-hint" }, t("backoffHint"))
+        h("p", { className: "drs-hint" }, t(constant ? "constantHint" : "backoffHint")),
+        previewText === null ? null : h("p", { key: "preview", className: "drs-hint drs-preview", "data-kind": constant ? CONSTANT_BACKOFF : EXPONENTIAL_BACKOFF }, `${t("backoffPreview")}${previewText}`)
       ),
       draft2.mode === "normal" ? h(
         "div",
@@ -1395,6 +1479,16 @@ var zh = {
   maxDelayMs: "\u6700\u5927\u5EF6\u8FDF\uFF08\u6BEB\u79D2\uFF09",
   jitterPercent: "\u968F\u673A\u6296\u52A8\uFF08%\uFF09",
   backoffHint: "\u5EF6\u8FDF\u6309\u6307\u6570\u589E\u957F\u5E76\u53E0\u52A0\u6296\u52A8\uFF0C\u4E14\u4E0D\u8D85\u8FC7\u6700\u5927\u5EF6\u8FDF\u3002",
+  backoffMode: "\u9000\u907F\u65B9\u5F0F",
+  backoffExponential: "\u6307\u6570\u9000\u907F",
+  backoffConstant: "\u56FA\u5B9A\u95F4\u9694",
+  constantIntervalMs: "\u56FA\u5B9A\u95F4\u9694\uFF08\u6BEB\u79D2\uFF09",
+  constantHint: "\u6BCF\u6B21\u91CD\u8BD5\u90FD\u7B49\u5F85\u76F8\u540C\u7684\u65F6\u95F4\uFF1A\u4FDD\u5B58\u540E\u521D\u59CB\u5EF6\u8FDF\uFF1D\u6700\u5927\u5EF6\u8FDF\uFF1D\u8BE5\u503C\uFF0C\u968F\u673A\u6296\u52A8\u4E3A 0\u3002",
+  backoffPreview: "\u9000\u907F\u9884\u89C8\uFF1A",
+  backoffPreviewStep: "{ms} ms",
+  backoffPreviewCap: "\u7B2C {retry} \u6B21\u8D77\u5C01\u9876 {ms} ms",
+  backoffPreviewJitter: "\u542B \xB1{percent}% \u968F\u673A\u6296\u52A8",
+  backoffPreviewConstant: "\u6BCF\u6B21\u91CD\u8BD5\u56FA\u5B9A\u7B49\u5F85 {ms} ms",
   retryableCodes: "\u53EF\u91CD\u8BD5\u9519\u8BEF",
   codeDefaults: "\u9ED8\u8BA4\u9519\u8BEF\u7801",
   codeCustom: "\u81EA\u5B9A\u4E49\u9519\u8BEF\u7801",
@@ -1458,6 +1552,16 @@ var en = {
   maxDelayMs: "Max delay (ms)",
   jitterPercent: "Jitter (%)",
   backoffHint: "Delay grows exponentially with jitter and never exceeds the max delay.",
+  backoffMode: "Backoff",
+  backoffExponential: "Exponential",
+  backoffConstant: "Fixed interval",
+  constantIntervalMs: "Fixed interval (ms)",
+  constantHint: "Every retry waits the same time: saving writes initial delay = max delay = this value with zero jitter.",
+  backoffPreview: "Backoff preview: ",
+  backoffPreviewStep: "{ms} ms",
+  backoffPreviewCap: "capped at {ms} ms from retry {retry}",
+  backoffPreviewJitter: "\xB1{percent}% jitter",
+  backoffPreviewConstant: "every retry waits {ms} ms",
   retryableCodes: "Retryable errors",
   codeDefaults: "Default codes",
   codeCustom: "Custom codes",
@@ -1817,6 +1921,12 @@ var uiCss = `
   font-size: 12px;
   line-height: 1.5;
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* The backoff preview is a computed value, not another hint: tabular digits let
+ * the listed waits be scanned and compared at a glance. */
+.drs-preview {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Retryable codes as selectable chips: the checked state uses the same ghost
